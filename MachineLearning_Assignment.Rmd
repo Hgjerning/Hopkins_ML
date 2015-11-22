@@ -1,3 +1,6 @@
+---
+output: pdf_document
+---
 
 ```{r setup2, cache = F, echo = F, message = F, warning = F, tidy = F}
 # make this an external chunk that can be included in any file
