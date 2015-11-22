@@ -1,0 +1,188 @@
+
+```{r setup2, cache = F, echo = F, message = F, warning = F, tidy = F}
+# make this an external chunk that can be included in any file
+library(knitr)
+
+setwd("~/G-ART/artData/Coursera/Hopkins/MachineLearning")
+rm(list=ls())
+
+if(!file.exists("./PredictionAssignment")){dir.create("./PredictionAssignment")}
+setwd("~/G-ART/artData/Coursera/Hopkins/MachineLearning/PredictionAssignment")
+
+options(width = 100)
+opts_chunk$set(message = F, error = F, warning = F, comment = NA, fig.align = 'center', dpi = 100, cache=TRUE,tidy = F, cache.path = '.cache/', fig.path = 'fig/')
+
+options(xtable.type = 'html')
+knit_hooks$set(inline = function(x) {
+  if(is.numeric(x)) {
+    round(x, getOption('digits'))
+  } else {
+    paste(as.character(x), collapse = ', ')
+  }
+})
+knit_hooks$set(plot = knitr:::hook_plot_html)
+```
+# Practical Machine Learning Course Project
+## Human Activity Recognition (HAR)
+### Background
+
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset). 
+
+### Data
+The training data for this project are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here: 
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+### The objective
+The goal of the project is to predict the manner in which they did the exercise.We are going to model the ability of giving correct feedback in three aspects that pertain to qualitative activity recognition: 1) the problem of specifying correct execution, 2) the automatic and robust detection of execution mistakes, and 3) how to provide feedback on the quality of execution to the user.
+
+### Background
+The dataset we are going to analyse, the Weight Lifting Exercise Dataset, has 5 classes, one correct and four incorrect executed exercises.
+
+        Class A: According to the specification 
+        Class B: Throwing the elbows to the front
+        Class C: Lifting the dumbbell only halfway
+        Class D: Lowering the dumbbell only halfway
+        Class E: Throwing the hips to the front
+        
+Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg).
+
+### Preparing and Downloading Data
+```{r datadownload,cache= TRUE}
+if (!file.exists("training.csv")) {
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv", dest="training.csv")
+}
+
+if (!file.exists("testing.csv")) {
+download.file("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv", dest="testing.csv")
+}
+
+training = read.csv("training.csv",header = TRUE,na.strings=c("NA","#DIV/0!", ""))
+testing = read.csv("testing.csv",header = TRUE,na.strings=c("NA","#DIV/0!", ""))
+
+str(training)
+table(training$classe)
+dim(training)
+```
+
+
+### Data Cleaning and Preparation
+Step one is to explore the data to look for obvious data errors / data noise. Looking at the initial dataset we notice it has dimentions of 19622 observations by 160 variables. Some features seems to have a lot of NA's and looking at the top 1% (T1), top 5% (T5) and bottom 10% (B10) there seems to be a pattern. 
+The dimensions drop from T1 to T5 but stays the same from T5 to B10 suggesting these exercises were started but stopped shortly after (like a false start) and they all take place in the top 5% of time hence we filter out these exercises by disregarding observations with at least 95% NA's which brings us down from 160 to 93 variables.
+
+```{r}
+training99 <- training[, colSums(is.na(training)) < nrow(training) * 0.99]
+training95 <- training[, colSums(is.na(training)) < nrow(training) * 0.95]
+training10 <- training[, colSums(is.na(training)) < nrow(training) * 0.1]
+dim(training99)
+dim(training95)
+dim(training10)
+```
+
+Since the exercises are about measuring correctly and incorrectly executed movements we are going to remove variables with little or zero variance:  
+```{r}
+# install.packages("caret", repos = 'http://cran.rstudio.com')
+library(caret) 
+NZV_Filter <- nearZeroVar(training95,saveMetrics = TRUE)
+trainingVar <- training95[,NZV_Filter$nzv == FALSE]
+dim(trainingVar)
+```
+
+This brings the dataset down with 34 variable to 59 vairable. Finally we are going to remove 
+variables not directly related to the classification detection.
+```{r}
+trainingFinal <- trainingVar[,-c(1:6)]
+dim(trainingFinal)
+library(ggplot2)
+ggplot(trainingFinal,aes(classe)) + 
+  geom_histogram(binwidth = 1,colour = "blue", fill = "darkgrey") +
+  xlab("Classes") +
+  ylab ("Frequency (events)") +
+  ggtitle("The Fives Classes to predict")
+```
+Which gives us the dataset we are going to use for the modelling. 
+
+
+### Building the Prediction Model:
+```{r}
+# install.packages("rpart", repos = 'http://cran.rstudio.com')
+library(rpart)  # Recursive partitioning for classification trees
+# install.packages("rpart.plot", repos = 'http://cran.rstudio.com')
+library(rpart.plot)
+# install.packages("caTools", repos = 'http://cran.rstudio.com')
+library(caTools)
+# install.packages("rattle", repos = 'http://cran.rstudio.com')
+library(rattle)
+# install.packages("randomForest", repos = 'http://cran.rstudio.com')
+library(randomForest)
+```
+
+We split the training data with 70% used for training our model and the remainding 30% left for cross validation of the model. For replication purposes we set a random seed at the beginning. 
+```{r}
+#random seed
+set.seed(123)
+trainIndex <- createDataPartition(y = trainingFinal$classe, p=0.7,list=FALSE);
+trainingPartition <- trainingFinal[trainIndex,];
+testingPartition <- trainingFinal[-trainIndex,];
+```
+
+
+### Model Predictions and Cross Validation
+
+We are going to test with three different models: A Classification Tree Model, Linear Discriminant Analysis Model and Random Forest Model. We are going to use Accuracy as the deciding parameter.
+We are training with the trainingPartition data and doing cross validation with the testingPartition data. 
+
+### Classification Tree Model
+```{r}
+ClassTreeModel <- rpart(classe ~ ., data=trainingPartition, method="class")
+predict_CTM <- predict(ClassTreeModel, testingPartition, type = "class")
+confusionMatrix(testingPartition$classe, predict_CTM)
+
+fancyRpartPlot(ClassTreeModel)
+```
+The classification Tree Model gave an overall accuracy of 73.15%.
+
+### Linear Discriminant Analysis Model
+```{r}
+LinearDiscriminantAnalysisModel <- train(classe ~ ., data=trainingPartition, method="lda")
+predict_LDAM <- predict(LinearDiscriminantAnalysisModel, testingPartition, type = "raw")
+confusionMatrix(testingPartition$classe, predict_LDAM)
+
+```
+The Linear Discriminant Analysis Model gave an overall accuracy of 69.82%.
+
+
+### Random Forest Model
+
+Using the Random Forest Model we get an accuracy of 99.47% which is quite impressive.
+```{r}
+RandomForestModel <- randomForest(classe ~ ., data = trainingPartition, type="class")
+predict_RFM <- predict(RandomForestModel,newdata=testingPartition)
+confusionMatrix(testingPartition$classe,predict_RFM)
+```
+and the random Forest Model is therefore the one we are going to use for predicting the 20 test cases
+
+
+### Apply your machine learning algorithm to the 20 test cases
+```{r}
+TestCases <- predict(RandomForestModel, newdata=testing, type="class")
+print(TestCases)
+
+pml_write_files = function(x) {
+    n = length(x)
+    for (i in 1:n) {
+        filename = paste0("problem_id_", i, ".txt")
+        write.table(x[i], file=filename, quote=FALSE, row.names=FALSE, 
+            col.names = FALSE)
+    }
+}
+
+pml_write_files(TestCases)
+```
+
+### Acknowledgement:
+Datasource: http://groupware.les.inf.puc-rio.br/har. has kindly provided the data for this analysis.
